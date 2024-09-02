@@ -63,10 +63,10 @@ python train.py \
     --score_file="score.txt"
 ```
 
-The score is the time it takes for your trainer to perform 20 steps of training (excluding the initialization of the trainer). 
+The score is the time in seconds it takes for your trainer to perform 20 steps of training (excluding the initialization of the trainer). 
 
 The model weights at the end of training should match the model weights in `expected_checkpoint20.bin`. Otherwise, an error is thrown and no score is generated.
 
 The goal is to get the lowest score possible.
 
-An example of a Trainer is provided in `nanogpt_trainer_lib.py`. Running the command above with "nanogpt" instead of "new" for the trainer on a "gpu_1x_a100_sxm4" instance from [Lambda Labs](https://lambdalabs.com) ("1x A100 (40 GB SXM4), 30 CPU cores, 205.4 GB RAM, 525.8 GB SSD") results in a mean score of 71.5772 with standard deviation 0.0436 over 5 trials. The loss achieved is 9.8402.
+An example of a Trainer is provided in `nanogpt_trainer_lib.py`. Running the command above with "nanogpt" instead of "new" for the trainer on a "gpu_1x_a100_sxm4" instance from [Lambda Labs](https://lambdalabs.com) ("1x A100 (40 GB SXM4), 30 CPU cores, 205.4 GB RAM, 525.8 GB SSD") results in a mean score of 71.5772 seconds with standard deviation 0.0436 seconds over 5 trials. The loss achieved is 9.8402.
