@@ -1,4 +1,4 @@
-# lm_training
+# lm_training_benchmark
 
 ## Overview
 
