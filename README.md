@@ -48,8 +48,8 @@ Your trainer should adhere to the API defined in `trainer_lib.py`.
 You should NOT modify:
 * any other code in this codebase
 * the .bin files
-* the name of `new_library_lib.py`
-* the name of the Trainer class in `new_library_lib.py`
+* the name of `new_trainer_lib.py`
+* the name of the Trainer class in `new_trainer_lib.py`
 
 Your trainer will be scored by running:
 
