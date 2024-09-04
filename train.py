@@ -1,135 +1,113 @@
 import argparse
 import dataclasses
-import json
-import os
 import time
 import torch
+import sys
 
 import trainer_lib
 import nanogpt_trainer_lib
 import new_trainer_lib
 
-_TRAINER_REGISTRY = {
-	"nanogpt": nanogpt_trainer_lib.Trainer,
-	"new": new_trainer_lib.Trainer,
+_TRAINER_MODULE_REGISTRY = {
+	nanogpt_trainer_lib.Trainer.name(): nanogpt_trainer_lib,
+	new_trainer_lib.Trainer.name(): new_trainer_lib,
 }
 
-_INIT_LR = 6e-4
-_MAX_NUM_STEPS = 1
-_DEFAULT_CONFIG = trainer_lib.TrainerConfig(
-    data_file="train.bin",
-    batch_size=12,
-    gradient_accumulation_steps=40,
-    device=("cuda" if torch.cuda.is_available() else "cpu"),
-    dtype=("bfloat16" if torch.cuda.is_available() and torch.cuda.is_bf16_supported() else "float16"),
-    grad_clip=1.0,
-    log_interval=1,
-    max_num_steps=_MAX_NUM_STEPS,
-    seed=0,
-    model=trainer_lib.ModelConfig(
-        block_size=1024,
-        vocab_size=50304,
-        n_layer=12,
-        n_head=12,
-        n_embd=768
-    ),
-    optimizer=trainer_lib.OptimizerConfig(
-        init_lr=_INIT_LR,
-        weight_decay=1e-1,
-        betas=(0.9, 0.95)
-    ),
-    learning_rate_scheduler=trainer_lib.LearningRateSchedulerConfig(
-        init_lr=_INIT_LR,
-        num_warmup_steps=2000,
-        num_lr_decay_steps=600000,
-        min_lr=6e-5
-    )
-)
+@dataclasses.dataclass
+class Checkpoint:
+	trainer: str
+	config: trainer_lib.TrainerConfig
+	train_state: trainer_lib.TrainState
 
-def _read_checkpoint(checkpoint_file: str):
+def _add_trainer_arg(field: dataclasses.Field, help_str: str, parser: argparse.ArgumentParser):
+	parser.add_argument(f"--{field.name}",
+		type=field.type,
+		default=(None if isinstance(field.default, dataclasses._MISSING_TYPE) else field.default),
+		help=help_str)
+
+def _add_trainer_args(parser: argparse.ArgumentParser):
+	# Add the flags from trainer_lib.TrainerConfig.
+	field_names = set()
+	for field in dataclasses.fields(trainer_lib.TrainerConfig):
+		_add_trainer_arg(field, "See trainer_lib.TrainerConfig.", parser)
+		field_names.add(field.name)
+
+	# Add any other flags from the other TrainerConfigs.
+	for trainer_module in _TRAINER_MODULE_REGISTRY.values():
+		for field in dataclasses.fields(trainer_module.TrainerConfig):
+			if field.name in field_names:
+				continue
+			_add_trainer_arg(field, f"See {trainer_module.__name__}.TrainerConfig.", parser)
+
+def _read_checkpoint(checkpoint_file: str) -> Checkpoint:
 	with open(checkpoint_file, "rb") as fin:
 		checkpoint = torch.load(fin)
-	config = trainer_lib.TrainerConfig(**checkpoint["config"])
-	config.model = trainer_lib.ModelConfig(**config.model)
-	config.optimizer = trainer_lib.OptimizerConfig(**config.optimizer)
-	config.learning_rate_scheduler = trainer_lib.LearningRateSchedulerConfig(
-		**config.learning_rate_scheduler)
+	trainer_module = _TRAINER_MODULE_REGISTRY[checkpoint["trainer"]]
+	config = trainer_module.TrainerConfig(**checkpoint["config"])
+	checkpoint = Checkpoint(
+		trainer=checkpoint["trainer"],
+		config=config,
+		train_state=trainer_lib.TrainState(**checkpoint["train_state"])
+	)
+	return checkpoint
 
-	init_train_state = trainer_lib.TrainState(
-		step=checkpoint["step"],
-		model=checkpoint["model"],
-		optimizer=checkpoint["optimizer"]
-	)	
-	return config, init_train_state
+def _get_present_arg_names(argv) -> set:
+	present_arg_names = set()
+	for arg in argv[1:]:
+		parts = arg.split("=")
+		assert len(parts) == 2
+		flag = parts[0]
+		assert flag.startswith("--")
+		present_arg_names.add(flag[2:])
+	return present_arg_names
 
-def main(args):
+def main(args, present_arg_names):
+	# Maybe read the initial checkpoint.
+	trainer_module = _TRAINER_MODULE_REGISTRY[args.trainer]
 	if args.init_checkpoint_file is not None:
-		config, init_train_state = _read_checkpoint(args.init_checkpoint_file)
+		init_checkpoint = _read_checkpoint(args.init_checkpoint_file)
+		if init_checkpoint.trainer != args.trainer:
+			raise ValueError("--trainer flag must match trainer in checkpoint.")
+		config = init_checkpoint.config
+		init_train_state = init_checkpoint.train_state
 	else:
-		config = _DEFAULT_CONFIG
+		config = trainer_module.TrainerConfig()
 		init_train_state = None
 
-	# Override default config.
+	# Override config with command-line arguments.
+	for arg_name in present_arg_names:
+		setattr(config, arg_name, getattr(args, arg_name))
 
-	if args.data_file is not None:
-		config.data_file = args.data_file
-
-	if args.max_num_steps is not None:
-		config.max_num_steps = args.max_num_steps
-
-	if args.batch_size is not None:
-		config.batch_size = args.batch_size
-
-	if args.gradient_accumulation_steps is not None:
-		config.gradient_accumulation_steps = args.gradient_accumulation_steps
-
-	if args.seed is not None:
-		config.seed = args.seed
-
-	if args.device is not None:
-		config.device = args.device
-
-	if args.small_model:
-		config.model.block_size = 4
-		config.model.n_layer = 2
-		config.model.n_embd = 8
-		config.model.n_head = 2
+	trainer = trainer_module.Trainer(config, init_train_state)
 
 	# Train.
-	trainer_cls = _TRAINER_REGISTRY[args.trainer]
-	trainer = trainer_cls(config, init_train_state)
-
 	start_time = time.time()
 	train_state = trainer.train()
 	elapsed = time.time() - start_time
 
-	# Write checkpoint.
-
+	# Write the final checkpoint.
 	if args.final_checkpoint_file is not None:
-		checkpoint = {
-			"config": dataclasses.asdict(config),
-			"step": train_state.step,
-			"model": train_state.model,
-			"optimizer": train_state.optimizer
-		}
+		checkpoint = Checkpoint(
+			trainer=args.trainer,
+			config=config,
+			train_state=train_state
+		)
 		with open(args.final_checkpoint_file, "wb") as fout:
-			torch.save(checkpoint, fout)
+			torch.save(dataclasses.asdict(checkpoint), fout)
 
-	# Compare actual and expected.
-
+	# Compare the actual checkpoint and the expected checkpoint.
 	if args.expected_checkpoint_file is not None:
 		# Note that we do not compare the optimizer state.
-		expected_config, expected_train_state = _read_checkpoint(args.expected_checkpoint_file)
-		if config != expected_config:
+		expected_checkpoint = _read_checkpoint(args.expected_checkpoint_file)
+		if config != expected_checkpoint.config:
 			raise ValueError("Configs do not match.")
-		if expected_train_state.model.keys() != train_state.model.keys():
+		if train_state.model.keys() != expected_checkpoint.train_state.model.keys():
 			raise ValueError("Model keys do not match.")
-		for key in expected_train_state.model.keys():
-			if not torch.allclose(expected_train_state.model[key], train_state.model[key]):
+		for key in expected_checkpoint.train_state.model.keys():
+			if not torch.allclose(train_state.model[key], expected_checkpoint.train_state.model[key]):
 				raise ValueError(f"Model tensor <{key}> does not match.")
 
-	# Write score.
-
+	# Write the score.
 	if args.score_file:
 		with open(args.score_file, "w") as fout:
 			fout.write(str(elapsed))
@@ -137,7 +115,7 @@ def main(args):
 if __name__ == "__main__":
 	parser = argparse.ArgumentParser(description="Train.")
 	parser.add_argument("--trainer", 
-		choices=sorted(list(_TRAINER_REGISTRY.keys())), required=True,
+		choices=sorted(list(_TRAINER_MODULE_REGISTRY.keys())), required=True,
 		help="Trainer.")	
 	parser.add_argument("--init_checkpoint_file", 
 		type=str, default=None,
@@ -151,29 +129,7 @@ if __name__ == "__main__":
 	parser.add_argument("--expected_checkpoint_file", 
 		type=str, default=None,
 		help="Path to the expected checkpoint file.")
-
-	# Override default config.
-	parser.add_argument("--data_file",
-		type=str, default=None,
-		help="Path to the bin file to use for training.")
-	parser.add_argument("--max_num_steps", 
-		type=int, default=None,
-		help="The maximum number of steps to train.")
-	parser.add_argument("--batch_size", 
-		type=int, default=None,
-		help="Batch size.")
-	parser.add_argument("--gradient_accumulation_steps", 
-		type=int, default=None,
-		help="Gradient accumulation steps.")
-	parser.add_argument("--seed", 
-		type=int, default=None,
-		help="The random seed.")
-	parser.add_argument("--device", 
-		choices=["cpu", "cuda"], default=None,
-		help="Device.")
-	parser.add_argument("--small_model",
-		action="store_true",
-		help="Use a small model (useful for testing).")
-
+	_add_trainer_args(parser)
 	args = parser.parse_args()
-	main(args)
+	present_arg_names = _get_present_arg_names(sys.argv)
+	main(args, present_arg_names)

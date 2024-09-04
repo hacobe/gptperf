@@ -1,10 +1,17 @@
+import dataclasses
 import math
 
 import torch
 import torch.nn as nn
 from torch.nn import functional as F
 
-import trainer_lib
+@dataclasses.dataclass
+class ModelConfig:
+    block_size: int
+    vocab_size: int
+    n_layer: int
+    n_head: int
+    n_embd: int
 
 class LayerNorm(nn.Module):
 
@@ -76,7 +83,7 @@ class Block(nn.Module):
 
 class Model(nn.Module):
 
-    def __init__(self, config: trainer_lib.ModelConfig):
+    def __init__(self, config: ModelConfig):
         super().__init__()
         assert config.vocab_size is not None
         assert config.block_size is not None
