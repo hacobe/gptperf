@@ -1,4 +1,4 @@
-# lm_training_benchmark
+# gptperf
 
 ## Overview
 
