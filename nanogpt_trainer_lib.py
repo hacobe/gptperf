@@ -14,7 +14,7 @@ from typing import Generator, Optional
 @dataclasses.dataclass
 class TrainerConfig(trainer_lib.TrainerConfig):
 	flash_attn: bool = True
-	fused_adamw: bool = True
+	fused_adamw: bool = torch.cuda.is_available()
 
 def _create_optimizer(
 	parameters: Generator[nn.Parameter, None, None],
