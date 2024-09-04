@@ -20,6 +20,15 @@ class Checkpoint:
 	train_state: trainer_lib.TrainState
 
 def _add_trainer_arg(field: dataclasses.Field, help_str: str, parser: argparse.ArgumentParser):
+	if field.type not in [bool, float, int, str]:
+		raise ValueError(f"Unsupported Field type <{field.type}>")
+
+	if field.type == bool:
+		parser.add_argument(f"--{field.name}",
+			action=argparse.BooleanOptionalAction,
+			help=help_str)
+		return
+
 	parser.add_argument(f"--{field.name}",
 		type=field.type,
 		default=(None if isinstance(field.default, dataclasses._MISSING_TYPE) else field.default),
@@ -54,11 +63,14 @@ def _read_checkpoint(checkpoint_file: str) -> Checkpoint:
 def _get_present_arg_names(argv) -> set:
 	present_arg_names = set()
 	for arg in argv[1:]:
-		parts = arg.split("=")
-		assert len(parts) == 2
-		flag = parts[0]
+		end = 0
+		while end < len(arg) and arg[end] != "=":
+			end += 1
+		flag = arg[:end]
 		assert flag.startswith("--")
-		present_arg_names.add(flag[2:])
+		# argparse removes the no- prefix in args.
+		start = 5 if flag.startswith("--no-") else 2
+		present_arg_names.add(flag[start:])
 	return present_arg_names
 
 def main(args, present_arg_names):
@@ -66,8 +78,6 @@ def main(args, present_arg_names):
 	trainer_module = _TRAINER_MODULE_REGISTRY[args.trainer]
 	if args.init_checkpoint_file is not None:
 		init_checkpoint = _read_checkpoint(args.init_checkpoint_file)
-		if init_checkpoint.trainer != args.trainer:
-			raise ValueError("--trainer flag must match trainer in checkpoint.")
 		config = init_checkpoint.config
 		init_train_state = init_checkpoint.train_state
 	else:
@@ -97,10 +107,8 @@ def main(args, present_arg_names):
 
 	# Compare the actual checkpoint and the expected checkpoint.
 	if args.expected_checkpoint_file is not None:
-		# Note that we do not compare the optimizer state.
+		# Note that we only compare the model weights.
 		expected_checkpoint = _read_checkpoint(args.expected_checkpoint_file)
-		if config != expected_checkpoint.config:
-			raise ValueError("Configs do not match.")
 		if train_state.model.keys() != expected_checkpoint.train_state.model.keys():
 			raise ValueError("Model keys do not match.")
 		for key in expected_checkpoint.train_state.model.keys():

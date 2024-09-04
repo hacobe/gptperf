@@ -11,7 +11,7 @@ from typing import Optional
 
 @dataclasses.dataclass
 class TrainerConfig(trainer_lib.TrainerConfig):
-	pass
+	flash_attn: bool = True
 
 def _create_optimizer(parameters, init_lr, weight_decay, beta1, beta2) -> torch.optim.Optimizer:
 	params = [p for p in parameters if p.requires_grad]
@@ -65,6 +65,7 @@ class Trainer(trainer_lib.Trainer):
 		    n_layer=config.n_layer,
 		    n_head=config.n_head,
 		    n_embd=config.n_embd,
+		    flash_attn=config.flash_attn
 		)
 		self._model = nanogpt_model_lib.Model(model_config)
 
