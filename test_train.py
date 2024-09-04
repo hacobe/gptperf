@@ -47,10 +47,10 @@ _EXPECTED_LOSSES_CPU = [10.8171, 10.8665, 10.8036, 10.8445, 10.8278]
 # 	--max_iters=4
 _EXPECTED_LOSSES_CUDA = [10.8203, 10.8672, 10.8047, 10.8516, 10.8281]
 
-def _run_command_and_assert_results_equal_to_nanogpt(command, expected_losses):
-	result = subprocess.run(command, shell=True, capture_output=True)
+def _run_command_and_assert_results_equal_to_nanogpt(args, expected_losses):
+	result = subprocess.run(args, capture_output=True, text=True)
 	assert result.returncode == 0
-	lines = result.stdout.decode("utf-8").strip().split("\n")
+	lines = result.stdout.strip().split("\n")
 	assert len(lines) == 5
 	steps = []
 	losses = []
@@ -71,20 +71,25 @@ def test_train_nanogpt_from_scratch(device, expected_losses):
 	if device == "cuda" and not torch.cuda.is_available():
 		pytest.skip()
 
-	command = f"""python train.py \
-	    --trainer="nanogpt" \
-	    --data_file="data.bin" \
-	    --max_num_steps=5 \
-        --batch_size=2 \
-        --gradient_accumulation_steps=2 \
-        --seed=123 \
-        --block_size=4 \
-        --n_layer=2 \
-        --n_embd=8 \
-        --n_head=2 \
-	    --device={device}
-	"""
-	_run_command_and_assert_results_equal_to_nanogpt(command, expected_losses)
+	args = [
+		"python",
+		"train.py",
+		"--trainer=nanogpt",
+		"--data_file=data.bin",
+		"--max_num_steps=5",
+		"--batch_size=2",
+		"--gradient_accumulation_steps=2",
+		"--seed=123",
+		"--block_size=4",
+		"--n_layer=2",
+		"--n_embd=8",
+		"--n_head=2",
+		f"--device={device}"
+	]
+	if device == "cpu":
+		args.append("--no-fused_adamw")
+
+	_run_command_and_assert_results_equal_to_nanogpt(args, expected_losses)
 
 @pytest.mark.parametrize("device, expected_losses", [
 	("cpu", _EXPECTED_LOSSES_CPU),
@@ -96,26 +101,35 @@ def test_train_nanogpt_from_checkpoint(device, expected_losses):
 
 	with tempfile.TemporaryDirectory() as tmpdirname:
 		checkpoint_file = os.path.join(tmpdirname, "small_checkpoint0.bin")
-		command = f"""python train.py \
-		    --trainer="nanogpt" \
-		    --max_num_steps=0 \
-		    --seed=123 \
-	        --block_size=4 \
-	        --n_layer=2 \
-	        --n_embd=8 \
-	        --n_head=2 \
-		    --device={device} \
-		    --final_checkpoint_file={checkpoint_file}
-		"""
-		result = subprocess.run(command, shell=True, capture_output=True)	
+		args = [
+			"python",
+			"train.py",
+			"--trainer=nanogpt",
+			"--max_num_steps=0",
+			"--seed=123",
+			"--block_size=4",
+			"--n_layer=2",
+			"--n_embd=8",
+			"--n_head=2",
+			f"--device={device}",
+			f"--final_checkpoint_file={checkpoint_file}"
+		]
+		if device == "cpu":
+			args.append("--no-fused_adamw")
+		result = subprocess.run(args, capture_output=True, text=True)
+		assert result.returncode == 0
 
-		command = f"""python train.py \
-		    --trainer="nanogpt" \
-    		--init_checkpoint_file={checkpoint_file} \
-		    --data_file="data.bin" \
-		    --max_num_steps=5 \
-            --batch_size=2 \
-            --gradient_accumulation_steps=2 \
-		    --device={device}
-		"""
-		_run_command_and_assert_results_equal_to_nanogpt(command, expected_losses)
+		args = [
+			"python",
+			"train.py",
+			"--trainer=nanogpt",
+			f"--init_checkpoint_file={checkpoint_file}",
+			"--data_file=data.bin",
+			"--max_num_steps=5",
+			"--batch_size=2",
+			"--gradient_accumulation_steps=2",
+			f"--device={device}"
+		]
+		if device == "cpu":
+			args.append("--no-fused_adamw")
+		_run_command_and_assert_results_equal_to_nanogpt(args, expected_losses)

@@ -1,19 +1,30 @@
 import contextlib
 import dataclasses
+import inspect
 import time
 import torch
+import torch.nn as nn
 import numpy as np
 
 import trainer_lib
 import nanogpt_model_lib
 
-from typing import Optional
+from typing import Generator, Optional
 
 @dataclasses.dataclass
 class TrainerConfig(trainer_lib.TrainerConfig):
 	flash_attn: bool = True
+	fused_adamw: bool = True
 
-def _create_optimizer(parameters, init_lr, weight_decay, beta1, beta2) -> torch.optim.Optimizer:
+def _create_optimizer(
+	parameters: Generator[nn.Parameter, None, None],
+	init_lr: float,
+	weight_decay: float,
+	beta1: float,
+	beta2: float,
+	fused_adamw: bool,
+	device_type: str,
+) -> torch.optim.Optimizer:
 	params = [p for p in parameters if p.requires_grad]
 	decay_params = [p for p in params if p.dim() >= 2]
 	nodecay_params = [p for p in params if p.dim() < 2]
@@ -23,10 +34,21 @@ def _create_optimizer(parameters, init_lr, weight_decay, beta1, beta2) -> torch.
 	]
 	num_decay_params = sum(p.numel() for p in decay_params)
 	num_nodecay_params = sum(p.numel() for p in nodecay_params)
+
+	if fused_adamw and device_type != "cuda":
+		raise ValueError("fused_adamw requires cuda device.")
+
+	if fused_adamw and "fused" not in inspect.signature(torch.optim.AdamW).parameters:
+		raise ValueError("fused_adamw unavailable.")
+
+	extra_args = dict(fused=True) if fused_adamw else dict()
+
 	optimizer = torch.optim.AdamW(
 		optim_groups,
 		lr=init_lr,
-		betas=(beta1, beta2))
+		betas=(beta1, beta2),
+		**extra_args
+	)
 	return optimizer
 
 def _get_lr(step, init_lr, min_lr, num_lr_decay_steps, num_warmup_steps):
@@ -65,7 +87,7 @@ class Trainer(trainer_lib.Trainer):
 		    n_layer=config.n_layer,
 		    n_head=config.n_head,
 		    n_embd=config.n_embd,
-		    flash_attn=config.flash_attn
+		    flash_attn=config.flash_attn,
 		)
 		self._model = nanogpt_model_lib.Model(model_config)
 
@@ -74,12 +96,15 @@ class Trainer(trainer_lib.Trainer):
 			self._model.load_state_dict(init_train_state.model)
 		self._model.to(config.device)
 
+		self._device_type = ("cuda" if "cuda" in config.device else "cpu")
 		self._optimizer = _create_optimizer(
 			parameters=self._model.parameters(),
 			init_lr=config.init_lr,
 			weight_decay=config.weight_decay,
 			beta1=config.beta1,
 			beta2=config.beta2,
+			fused_adamw=config.fused_adamw,
+			device_type=self._device_type
 		)
 		if init_train_state is not None:
 			self._optimizer.load_state_dict(init_train_state.optimizer)
@@ -98,9 +123,8 @@ class Trainer(trainer_lib.Trainer):
 			"bfloat16": torch.bfloat16,
 			"float16": torch.float16
 		}[config.dtype]
-		device_type = "cuda" if "cuda" in config.device else "cpu"
-		ctx = contextlib.nullcontext() if device_type == "cpu" else torch.amp.autocast(
-			device_type=device_type, dtype=ptdtype)
+		ctx = contextlib.nullcontext() if self._device_type == "cpu" else torch.amp.autocast(
+			device_type=self._device_type, dtype=ptdtype)
 		scaler = torch.cuda.amp.GradScaler(enabled=(config.dtype == "float16"))
 
 		t0 = time.time()
