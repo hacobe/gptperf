@@ -78,7 +78,10 @@ def test_train_nanogpt_from_scratch(device, expected_losses):
         --batch_size=2 \
         --gradient_accumulation_steps=2 \
         --seed=123 \
-        --small_model \
+        --block_size=4 \
+        --n_layer=2 \
+        --n_embd=8 \
+        --n_head=2 \
 	    --device={device}
 	"""
 	_run_command_and_assert_results_equal_to_nanogpt(command, expected_losses)
@@ -97,7 +100,10 @@ def test_train_nanogpt_from_checkpoint(device, expected_losses):
 		    --trainer="nanogpt" \
 		    --max_num_steps=0 \
 		    --seed=123 \
-		    --small_model \
+	        --block_size=4 \
+	        --n_layer=2 \
+	        --n_embd=8 \
+	        --n_head=2 \
 		    --device={device} \
 		    --final_checkpoint_file={checkpoint_file}
 		"""
