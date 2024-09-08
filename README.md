@@ -77,7 +77,7 @@ The benchmarks were run with commit 86e0ba12 of this codebase in a Docker contai
 
 | Config                                               | Time to train 20 steps (seconds) | Loss   |
 | ---------------------------------------------------- | -------------------------------- | ------ |
-| flash_attn+fused_adamw+compile_model (default)       | 52.35                            | 9.8413 |
+| fused_adamw+flash_attn+compile_model (default)       | 52.35                            | 9.8413 |
 | fused_adamw+flash_attn                               | 66.77                            | 9.8402 |
 | fused_adamw                                          | 176.29                           | 9.8404 |
 | -                                                    | 176.33                           | 9.8404 |
