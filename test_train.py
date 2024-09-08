@@ -84,6 +84,7 @@ def test_train_nanogpt_from_scratch(device, expected_losses):
 		"--n_layer=2",
 		"--n_embd=8",
 		"--n_head=2",
+		"--no-compile_model",
 		f"--device={device}"
 	]
 	if device == "cpu":
@@ -111,6 +112,7 @@ def test_train_nanogpt_from_checkpoint(device, expected_losses):
 			"--n_layer=2",
 			"--n_embd=8",
 			"--n_head=2",
+			"--no-compile_model",
 			f"--device={device}",
 			f"--final_checkpoint_file={checkpoint_file}"
 		]
@@ -128,6 +130,7 @@ def test_train_nanogpt_from_checkpoint(device, expected_losses):
 			"--max_num_steps=5",
 			"--batch_size=2",
 			"--gradient_accumulation_steps=2",
+			"--no-compile_model",
 			f"--device={device}"
 		]
 		if device == "cpu":

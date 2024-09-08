@@ -1,3 +1,4 @@
+import collections
 import contextlib
 import dataclasses
 import inspect
@@ -15,6 +16,7 @@ from typing import Generator, Optional
 class TrainerConfig(trainer_lib.TrainerConfig):
 	flash_attn: bool = True
 	fused_adamw: bool = torch.cuda.is_available()
+	compile_model: bool = True
 
 def _create_optimizer(
 	parameters: Generator[nn.Parameter, None, None],
@@ -80,6 +82,27 @@ class Trainer(trainer_lib.Trainer):
 
 		np.random.seed(config.seed)
 		torch.manual_seed(config.seed)
+		X, Y = _get_batch(
+			config.data_file,
+			config.batch_size,
+			config.block_size,
+			config.device
+		)
+
+		# Hacky reset of random seed to avoid updating expected losses in the tests.
+		np.random.seed(config.seed)
+		torch.manual_seed(config.seed)
+
+		self._device_type = ("cuda" if "cuda" in config.device else "cpu")
+		torch.backends.cuda.matmul.allow_tf32 = True
+		torch.backends.cudnn.allow_tf32 = True
+		ptdtype = {
+			"float32": torch.float32,
+			"bfloat16": torch.bfloat16,
+			"float16": torch.float16
+		}[config.dtype]
+		self._ctx = contextlib.nullcontext() if self._device_type == "cpu" else torch.amp.autocast(
+			device_type=self._device_type, dtype=ptdtype)
 
 		model_config = nanogpt_model_lib.ModelConfig(
 		    block_size=config.block_size,
@@ -90,13 +113,18 @@ class Trainer(trainer_lib.Trainer):
 		    flash_attn=config.flash_attn,
 		)
 		self._model = nanogpt_model_lib.Model(model_config)
-
-
 		if init_train_state is not None:
 			self._model.load_state_dict(init_train_state.model)
 		self._model.to(config.device)
 
-		self._device_type = ("cuda" if "cuda" in config.device else "cpu")
+		if config.compile_model:
+			# Compile the model with a throw away forward and backward pass for warm-up.
+			self._model = torch.compile(self._model)
+			with self._ctx:
+				_, loss = self._model(X, Y)
+			loss.backward()
+			self._model.zero_grad(set_to_none=True)
+
 		self._optimizer = _create_optimizer(
 			parameters=self._model.parameters(),
 			init_lr=config.init_lr,
@@ -116,15 +144,6 @@ class Trainer(trainer_lib.Trainer):
 	def train(self) -> trainer_lib.TrainState:
 		config = self._config
 
-		torch.backends.cuda.matmul.allow_tf32 = True
-		torch.backends.cudnn.allow_tf32 = True
-		ptdtype = {
-			"float32": torch.float32,
-			"bfloat16": torch.bfloat16,
-			"float16": torch.float16
-		}[config.dtype]
-		ctx = contextlib.nullcontext() if self._device_type == "cpu" else torch.amp.autocast(
-			device_type=self._device_type, dtype=ptdtype)
 		scaler = torch.cuda.amp.GradScaler(enabled=(config.dtype == "float16"))
 
 		t0 = time.time()
@@ -148,7 +167,7 @@ class Trainer(trainer_lib.Trainer):
 				param_group["lr"] = lr
 
 			for micro_step in range(config.gradient_accumulation_steps):
-				with ctx:
+				with self._ctx:
 					logits, loss = self._model(X, Y)
 					loss = loss / config.gradient_accumulation_steps 
 				X, Y = _get_batch(
@@ -175,9 +194,17 @@ class Trainer(trainer_lib.Trainer):
 
 			self._step += 1
 
+		state_dict = collections.OrderedDict()
+		for key in self._model.state_dict():
+			# torch.compile adds this prefix to keys.
+			if key.startswith("_orig_mod."):
+				new_key = key[10:]
+			else:
+				new_key = key
+			state_dict[new_key] = self._model.state_dict()[key]
 		return trainer_lib.TrainState(
 			step=self._step,
-			model=self._model.state_dict(),
+			model=state_dict,
 			optimizer=self._optimizer.state_dict()
 		)
 
