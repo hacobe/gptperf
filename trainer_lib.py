@@ -45,7 +45,8 @@ class Trainer:
     ):
         """Initialize the trainer.
 
-        This method should not perform any training.
+        This method should not perform any training
+        that contributes to the training in train(...).
         """
         pass
 
