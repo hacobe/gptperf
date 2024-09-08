@@ -69,4 +69,15 @@ The model weights at the end of training should match the model weights in `expe
 
 The goal is to get the lowest score possible.
 
-An example of a Trainer is provided in `nanogpt_trainer_lib.py`. Running the command above with "nanogpt" instead of "new" for the trainer on a "gpu_1x_a100_sxm4" instance from [Lambda Labs](https://lambdalabs.com) ("1x A100 (40 GB SXM4), 30 CPU cores, 205.4 GB RAM, 525.8 GB SSD") results in a mean score of 71.5772 seconds with standard deviation 0.0436 seconds over 5 trials. The loss achieved is ~9.84.
+## Results
+
+This section contains some benchmarking results running the command in the "Task description" section with "nanogpt" instead of "new" for the trainer.
+
+The benchmarks were run with commit 86e0ba12 of this codebase in a Docker container generated using `Dockerfile` on a "gpu_1x_a100_sxm4" instance from [Lambda Labs](https://lambdalabs.com) ("1x A100 (40 GB SXM4), 30 CPU cores, 205.4 GB RAM, 525.8 GB SSD") in the "Arizona, USA (us-west-2)" region on 9/8/2024. `checkpoint0.bin` and `expected_checkpoint20.bin` were generated with the default config.
+
+| Config                                               | Time to train 20 steps (seconds) | Loss   |
+| ---------------------------------------------------- | -------------------------------- | ------ |
+| flash_attn+fused_adamw+compile_model (default)       | 52.35                            | 9.8413 |
+| fused_adamw+flash_attn                               | 66.77                            | 9.8402 |
+| fused_adamw                                          | 176.29                           | 9.8404 |
+| -                                                    | 176.33                           | 9.8404 |
