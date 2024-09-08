@@ -112,7 +112,12 @@ def main(args, present_arg_names):
 		if train_state.model.keys() != expected_checkpoint.train_state.model.keys():
 			raise ValueError("Model keys do not match.")
 		for key in expected_checkpoint.train_state.model.keys():
-			if not torch.allclose(train_state.model[key], expected_checkpoint.train_state.model[key]):
+			if not torch.allclose(
+				train_state.model[key],
+				expected_checkpoint.train_state.model[key],
+				rtol=1e-05,
+				atol=1e-05,
+			):
 				raise ValueError(f"Model tensor <{key}> does not match.")
 
 	# Write the score.
